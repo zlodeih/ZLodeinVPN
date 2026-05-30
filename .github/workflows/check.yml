@@ -11,7 +11,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        fetch-depth: 0
+        fetch-depth: 0 # 👈 Обязательно скачиваем историю коммитов, чтобы можно было синхронизироваться
     - uses: actions/setup-python@v5
       with:
         python-version: '3.10'
@@ -20,5 +20,14 @@ jobs:
         git config --local user.email "actions@github.com"
         git config --local user.name "GitHub Actions"
         git add cleaned_sub.txt
-        # Если есть изменения, делаем коммит, скачиваем последние обновления и затем пушим
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update servers" && git pull --rebase origin main && git push)
+        
+        # Проверяем, есть ли изменения в файле
+        if ! git diff --staged --quiet; then
+          git commit -m "Auto-update servers"
+          # 👈 Скачиваем последние новшества с GitHub перед отправкой (решает ту самую ошибку)
+          git pull --rebase origin main
+          # Отправляем обновленный файл
+          git push
+        else
+          echo "Нет новых изменений для сохранения"
+        fi
