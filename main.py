@@ -49,12 +49,12 @@ def process_line(line):
     return None
 
 def main():
-    print("=== ЗАПУСК СУПЕР-БЫСТРОГО ЧЕКЕРА ===")
+    print("=== ЗАПУСК СТАБИЛЬНОГО ОПТИМИЗИРОВАННОГО ЧЕКЕРА ===")
     checked_servers = []
     seen_configs = set()
     all_lines = []
 
-    # 1. Скачиваем все базы
+    # 1. Скачиваем базы
     for url in SOURCES:
         try:
             print(f"Скачиваю базу: {url}")
@@ -69,10 +69,10 @@ def main():
         except Exception as e:
             print(f"Ошибка при скачивании {url}: {e}")
 
-    print(f"Уникальных серверов найдено: {len(all_lines)}. Запускаю 100 потоков проверки...")
+    print(f"Уникальных серверов найдено: {len(all_lines)}. Запускаю 40 безопасных потоков...")
 
-    # 2. Проверяем в 100 потоков одновременно
-    with ThreadPoolExecutor(max_workers=100) as executor:
+    # 2. Проверяем в 40 потоков (оптимально для лимитов GitHub)
+    with ThreadPoolExecutor(max_workers=40) as executor:
         futures = [executor.submit(process_line, line) for line in all_lines]
         for future in as_completed(futures):
             res = future.result()
@@ -88,11 +88,15 @@ def main():
     top_fast_servers = checked_servers[:300]
     working_servers = [line for latency, line in top_fast_servers]
 
-    # 4. Формируем красивый заголовок для Cloudflare и Happ VPN
+    # Генерируем таймстамп, чтобы файл ВСЕГДА обновлялся и Git не падал с ошибкой
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    # 4. Формируем красивый заголовок
     final_lines = [
         "# profile-title: 🌸ZLodeinVPN🌸",
         "# profile-update-interval: 1",
-        f"# Всего живых: {len(checked_servers)} | Отобрано топ-300 лучших по пингу"
+        f"# Последнее обновление: {timestamp} UTC",
+        f"# Всего живых: {len(checked_servers)} | Отобрано топ-300 лучших"
     ]
     final_lines.extend(working_servers)
 
@@ -100,7 +104,7 @@ def main():
     with open("cleaned_sub.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(final_lines))
     
-    print("Результат успешно сохранен в cleaned_sub.txt! Топ-300 готовы.")
+    print(f"Результат успешно сохранен в cleaned_sub.txt в {timestamp}!")
 
 if __name__ == "__main__":
     try:
