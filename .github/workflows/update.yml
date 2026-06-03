@@ -1,0 +1,34 @@
+name: Update VPN Configs
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Запуск каждый час
+  workflow_dispatch: # Возможность ручного запуска
+
+jobs:
+  update:
+    runs-with: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Run update script
+        run: |
+          python main.py
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add cleaned_sub.txt
+          git commit -m "Update VPN configs [automated]" || exit 0
+          git push
