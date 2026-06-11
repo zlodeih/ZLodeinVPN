@@ -2,7 +2,7 @@ name: Update VPN Configs
 
 on:
   schedule:
-    - cron: '0 * * * *' # Запуск каждый час
+    - cron: '37 * * * *' # Запуск каждый час (выбрана случайная минута для обхода задержек GitHub)
   workflow_dispatch: # Возможность ручного запуска
 
 jobs:
