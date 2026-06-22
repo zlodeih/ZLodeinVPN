@@ -1,0 +1,6 @@
+# временные файлы чекера — не коммитим
+all_configs.txt
+working_*.txt
+working_baseline.txt
+xk.archive
+xray-knife
