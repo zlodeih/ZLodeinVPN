@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ZLodeinVPN — сборщик и ЧЕСТНЫЙ чекер конфигов.
+ZLodeinVPN — сборщик и ЧЕСТНЫЙ чекер конфигов (xray-knife).
 
 Этапы:
-  1) Скачать источники, убрать дубли                       -> all_configs.txt
-  2) BASELINE: проверить, какие конфиги вообще живые
-     (обычный generate_204) — это диагностика.
-  3) ФИЛЬТРЫ: по очереди прогнать выживших через каждый
-     тест-URL (Telegram, Gemini). В итоге остаются только те,
-     что тянут ВСЕ URL.
-  4) Сложить топ-N + шапку                         -> cleaned_sub.txt
+  1) Скачать источники, убрать дубли                 -> all_configs.txt
+  2) Реальный тест каждого конфига через xray-knife
+     (официальная команда: http -f ... -t ... -o ...) -> working.txt
+  3) Сложить топ-N + шапку                       -> cleaned_sub.txt
 
 Запуск: python main.py  (требует бинарь xray-knife в PATH или рядом)
 """
@@ -37,27 +34,25 @@ SOURCES = [
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt",
 ]
 
-ALL_FILE    = "all_configs.txt"
-OUTPUT_FILE = "cleaned_sub.txt"
+ALL_FILE     = "all_configs.txt"
+WORKING_FILE = "working.txt"
+OUTPUT_FILE  = "cleaned_sub.txt"
 
 XRAY_KNIFE = os.environ.get("XRAY_KNIFE") or shutil.which("xray-knife") or "./xray-knife"
 THREADS    = os.environ.get("XK_THREADS", "100")
 MAX_OUTPUT = int(os.environ.get("MAX_OUTPUT", "300"))
 
-# Базовый URL "живости" (диагностика). Пусто — пропустить.
-BASELINE_URL = os.environ.get("XK_BASELINE_URL", "https://www.gstatic.com/generate_204").strip()
-
-# Тест-URLы: конфиг должен открыть КАЖДЫЙ. Дефолт: Telegram + Gemini.
-# Важно: берём страницы, которые отдают 200 напрямую (без редиректа).
+# ОПЦИОНАЛЬНО: фильтр по конкретным URL (Telegram/Gemini).
+# ВКЛЮЧАЕТСЯ только если задан XK_URL_FLAG (точное имя флага вашей версии
+# xray-knife, узнать: ./xray-knife http -h). По умолчанию — выключено,
+# чтобы не ломать тест неизвестным флагом.
+URL_FLAG  = os.environ.get("XK_URL_FLAG", "").strip()
 TEST_URLS = [
-    u.strip() for u in os.environ.get(
-        "XK_TEST_URLS",
-        "https://web.telegram.org/k/,https://gemini.google.com/",
-    ).split(",") if u.strip()
+    u.strip() for u in os.environ.get("XK_TEST_URLS", "").split(",") if u.strip()
 ]
 
-URL_FLAG   = os.environ.get("XK_URL_FLAG", "-d")          # флаг тест-URL (исторически -d/--destURL)
-EXTRA_ARGS = os.environ.get("XK_EXTRA_ARGS", "").split()  # любые доп. флаги
+# Любые доп. флаги для xray-knife (напр. --speedtest и т.п.)
+EXTRA_ARGS = os.environ.get("XK_EXTRA_ARGS", "").split()
 
 PROTO_RE = re.compile(r"(?:vless|vmess|ss|ssr|trojan|tuic|hysteria2?|hy2)://[^\s'\"<>]+")
 
@@ -103,11 +98,12 @@ def collect_configs(path):
     return out
 
 
-def test_pass(input_file, url, out_file):
+def test_pass(input_file, out_file, url=None):
+    """Один проход xray-knife. url передаётся ТОЛЬКО если задан URL_FLAG."""
     if os.path.exists(out_file):
         os.remove(out_file)
     cmd = [XRAY_KNIFE, "http", "-f", input_file, "-t", str(THREADS), "-o", out_file]
-    if url:
+    if url and URL_FLAG:
         cmd += [URL_FLAG, url]
     cmd += EXTRA_ARGS
     print(f"[test] {' '.join(cmd)}")
@@ -118,31 +114,24 @@ def test_pass(input_file, url, out_file):
 
 
 def run_checks():
-    # Диагностика: сколько вообще живых (не режет итог, только показывает)
-    if BASELINE_URL:
-        print("--- BASELINE: проверка базовой живости ---")
-        alive = test_pass(ALL_FILE, BASELINE_URL, "working_baseline.txt")
-        if not alive:
-            print("!! BASELINE = 0: ни один конфиг не прошёл даже базовый тест.")
-            print("   Значит проблема не в URL, а в ядре/флагах/конфигах.")
-        start_input, start_file = ALL_FILE, None
-        if alive:
-            start_file = "working_baseline.txt"
-            start_input = start_file
-    else:
-        start_input = ALL_FILE
+    # Базовый реальный тест связи (официальная команда, без кастомных флагов)
+    print("--- ОСНОВНОЙ тест связи ---")
+    survivors = test_pass(ALL_FILE, WORKING_FILE)
 
-    # Фильтры по тест-URLам (Telegram, Gemini, ...)
-    current_input = start_input
-    survivors = collect_configs(start_input) if start_input != ALL_FILE else []
-    print("--- ФИЛЬТРЫ по тест-URLам ---")
-    for i, url in enumerate(TEST_URLS):
-        out_file = f"working_{i}.txt"
-        survivors = test_pass(current_input, url, out_file)
-        if not survivors:
-            print("        живых не осталось, прерываю цепочку")
-            break
-        current_input = out_file
+    # Опциональные фильтры по URL — только если явно задан флаг
+    if URL_FLAG and TEST_URLS and survivors:
+        print(f"--- ФИЛЬТРЫ по URL (флаг {URL_FLAG}) ---")
+        current = WORKING_FILE
+        for i, url in enumerate(TEST_URLS):
+            out_file = f"working_url_{i}.txt"
+            survivors = test_pass(current, out_file, url=url)
+            if not survivors:
+                print("        живых не осталось, прерываю цепочку")
+                break
+            current = out_file
+    elif TEST_URLS and not URL_FLAG:
+        print("[info] XK_TEST_URLS задан, но XK_URL_FLAG пуст — фильтр по URL пропущен.")
+        print("       Узнайте флаг командой ./xray-knife http -h и задайте XK_URL_FLAG.")
     return survivors
 
 
@@ -150,7 +139,10 @@ def write_output(working, total):
     if MAX_OUTPUT > 0:
         working = working[:MAX_OUTPUT]
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    checks = " + ".join(TEST_URLS) if TEST_URLS else "default"
+    if URL_FLAG and TEST_URLS:
+        checks = " + ".join(TEST_URLS)
+    else:
+        checks = "реальная связь (default)"
     header = [
         "# profile-title: 🌸ZLodeinVPN_CIDR_AUTOMATED🌸",
         "# profile-update-interval: 1",
