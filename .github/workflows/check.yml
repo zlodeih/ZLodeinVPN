@@ -36,20 +36,22 @@ jobs:
           curl -sL "$url" -o xk.archive
           if [[ "$url" == *.zip ]]; then unzip -o xk.archive; else tar -xzf xk.archive; fi
           chmod +x xray-knife
+          echo '--- xray-knife version ---'
           ./xray-knife -v || true
+          echo '--- xray-knife http -h (список флагов) ---'
+          ./xray-knife http -h || true
 
       - name: Run checker
         env:
           XRAY_KNIFE: ./xray-knife
           XK_THREADS: '100'
           MAX_OUTPUT: '300'                 # сколько конфигов оставлять в итоге
-          # Базовый тест "живости" (диагностика, показывает сколько вообще живых):
-          XK_BASELINE_URL: 'https://www.gstatic.com/generate_204'
-          # Проверяем, что конфиг реально тянет и Telegram, и Gemini:
-          XK_TEST_URLS: 'https://web.telegram.org/k/,https://gemini.google.com/'
-          # Если ваша версия xray-knife использует другой флаг тест-URL — поменяйте:
+          # --- ОПЦИОНАЛЬНО: фильтр по Telegram/Gemini ---
+          # Включится ТОЛЬКО когда укажете точное имя флага тест-URL
+          # (увидите его в логе шага выше: "xray-knife http -h").
           # XK_URL_FLAG: '-d'
-          # XK_EXTRA_ARGS: ''               # см. ./xray-knife http -h
+          # XK_TEST_URLS: 'https://web.telegram.org/k/,https://gemini.google.com/'
+          # XK_EXTRA_ARGS: ''
         run: python main.py
 
       - name: Commit results
