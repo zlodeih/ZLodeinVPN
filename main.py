@@ -4,10 +4,9 @@
 ZLodeinVPN — сборщик и ЧЕСТНЫЙ чекер конфигов (xray-knife).
 
 Этапы:
-  1) Скачать источники, убрать дубли                 -> all_configs.txt
-  2) Реальный тест каждого конфига через xray-knife
-     (официальная команда: http -f ... -t ... -o ...) -> working.txt
-  3) Сложить топ-N + шапку                       -> cleaned_sub.txt
+  1) Скачать источники (поддержка plain и base64), убрать дубли -> all_configs.txt
+  2) Реальный тест каждого конфига через xray-knife          -> working.txt
+  3) Сложить топ-N + шапку                                  -> cleaned_sub.txt
 
 Запуск: python main.py  (требует бинарь xray-knife в PATH или рядом)
 """
@@ -16,22 +15,36 @@ import os
 import re
 import sys
 import time
+import base64
 import shutil
 import subprocess
 import urllib.request
 
 # ----------------------------------------------------------------------------
-# Настройки (можно переопределить через env)
+# Источники конфигов
 # ----------------------------------------------------------------------------
 SOURCES = [
+    # --- Под РФ / белые списки ---
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt",
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
     "https://raw.githubusercontent.com/whoahaow/rjsxrd/refs/heads/main/githubmirror/bypass/bypass-all.txt",
     "https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta7.txt",
     "https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta6.txt",
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/ru-sni/vless_ru.txt",
+    # --- Крупные общие (обновляются часто; живые отберёт тест) ---
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/vless.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/trojan.txt",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt",
+    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",
+    # --- Добавлено по запросу ---
+    "https://raw.githubusercontent.com/VOID-Anonymity/V.O.I.D-VPN_Bypass/refs/heads/main/url_work.txt",
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_VLESS_RUS.txt",
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_SS+All_RUS.txt",
+    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/refs/heads/main/mirror/1.txt",
 ]
 
 ALL_FILE     = "all_configs.txt"
@@ -40,21 +53,40 @@ OUTPUT_FILE  = "cleaned_sub.txt"
 
 XRAY_KNIFE = os.environ.get("XRAY_KNIFE") or shutil.which("xray-knife") or "./xray-knife"
 THREADS    = os.environ.get("XK_THREADS", "100")
-MAX_OUTPUT = int(os.environ.get("MAX_OUTPUT", "300"))
+MAX_OUTPUT = int(os.environ.get("MAX_OUTPUT", "0"))  # 0 = без лимита (все живые)
 
 # ОПЦИОНАЛЬНО: фильтр по конкретным URL (Telegram/Gemini).
-# ВКЛЮЧАЕТСЯ только если задан XK_URL_FLAG (точное имя флага вашей версии
-# xray-knife, узнать: ./xray-knife http -h). По умолчанию — выключено,
-# чтобы не ломать тест неизвестным флагом.
+# ВКЛЮЧАЕТСЯ только если задан XK_URL_FLAG (точное имя флага вашей версии).
 URL_FLAG  = os.environ.get("XK_URL_FLAG", "").strip()
 TEST_URLS = [
     u.strip() for u in os.environ.get("XK_TEST_URLS", "").split(",") if u.strip()
 ]
 
-# Любые доп. флаги для xray-knife (напр. --speedtest и т.п.)
 EXTRA_ARGS = os.environ.get("XK_EXTRA_ARGS", "").split()
 
 PROTO_RE = re.compile(r"(?:vless|vmess|ss|ssr|trojan|tuic|hysteria2?|hy2)://[^\s'\"<>]+")
+
+
+def extract_from_text(text, seen, out):
+    """Извлечь конфиги из текста (построчно), без дублей."""
+    cnt = 0
+    for m in PROTO_RE.findall(text):
+        if m not in seen:
+            seen.add(m); out.append(m); cnt += 1
+    return cnt
+
+
+def try_base64(text):
+    """Попробовать раскодировать весь блок как base64. Вернёт '' если не вышло."""
+    s = "".join(text.split())
+    if len(s) < 16:
+        return ""
+    # добивка padding
+    s += "=" * ((4 - len(s) % 4) % 4)
+    try:
+        return base64.b64decode(s, validate=False).decode("utf-8", "ignore")
+    except Exception:
+        return ""
 
 
 def fetch_sources():
@@ -63,14 +95,13 @@ def fetch_sources():
         try:
             print(f"[fetch] {url}")
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            text = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "ignore")
-            cnt = 0
-            for line in text.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#") or "://" not in line:
-                    continue
-                if line not in seen:
-                    seen.add(line); out.append(line); cnt += 1
+            text = urllib.request.urlopen(req, timeout=25).read().decode("utf-8", "ignore")
+            cnt = extract_from_text(text, seen, out)
+            if cnt == 0:
+                # возможно подписка в base64
+                decoded = try_base64(text)
+                if decoded:
+                    cnt = extract_from_text(decoded, seen, out)
             print(f"        +{cnt} уникальных")
         except Exception as e:
             print(f"        ! ошибка: {e}")
@@ -114,11 +145,9 @@ def test_pass(input_file, out_file, url=None):
 
 
 def run_checks():
-    # Базовый реальный тест связи (официальная команда, без кастомных флагов)
     print("--- ОСНОВНОЙ тест связи ---")
     survivors = test_pass(ALL_FILE, WORKING_FILE)
 
-    # Опциональные фильтры по URL — только если явно задан флаг
     if URL_FLAG and TEST_URLS and survivors:
         print(f"--- ФИЛЬТРЫ по URL (флаг {URL_FLAG}) ---")
         current = WORKING_FILE
