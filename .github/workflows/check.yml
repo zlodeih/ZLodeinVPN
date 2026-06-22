@@ -1,35 +1,64 @@
 name: VPN Checker
+
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *'        # каждый час
+  workflow_dispatch:           # + кнопка ручного запуска
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vpn-checker
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        
-    - uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-        
-    - run: python main.py
-    
-    - run: |
-        git config --local user.email "actions@github.com"
-        git config --local user.name "GitHub Actions"
-        git add cleaned_sub.txt
-        
-        # Проверяем, есть ли реальные изменения в файле
-        if git diff --staged --quiet; then
-          echo "Файл не изменился, коммит не требуется."
-        else
-          git commit -m "Auto-update servers"
-          # Аккуратно подтягиваем изменения, если они были сделаны вручную на сайте
-          git pull --rebase origin main
-          git push origin main
-        fi
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download xray-knife
+        run: |
+          url=$(curl -s https://api.github.com/repos/lilendian0x00/xray-knife/releases/latest \
+            | jq -r '.assets[].browser_download_url' \
+            | grep -iE 'linux' | grep -iE '64' | grep -ivE 'arm|arm64|aarch' \
+            | grep -iE '\.(zip|tar\.gz)$' | head -n1)
+          echo "Asset: $url"
+          curl -sL "$url" -o xk.archive
+          if [[ "$url" == *.zip ]]; then unzip -o xk.archive; else tar -xzf xk.archive; fi
+          chmod +x xray-knife
+          ./xray-knife -v || true
+
+      - name: Run checker
+        env:
+          XRAY_KNIFE: ./xray-knife
+          XK_THREADS: '100'
+          MAX_OUTPUT: '300'                 # сколько конфигов оставлять в итоге
+          # Проверяем, что конфиг реально тянет и Telegram, и Gemini:
+          XK_TEST_URLS: 'https://web.telegram.org,https://gemini.google.com'
+          # Если ваша версия xray-knife использует другой флаг тест-URL — поменяйте здесь:
+          # XK_URL_FLAG: '-d'
+          # XK_EXTRA_ARGS: ''               # напр. отсечка по задержке (см. ./xray-knife http -h)
+        run: python main.py
+
+      - name: Commit results
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add cleaned_sub.txt
+          if git diff --staged --quiet; then
+            echo "Изменений нет, коммит не нужен."
+          else
+            git commit -m "Auto-update working configs"
+            git pull --rebase origin main
+            git push origin main
+          fi
