@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ZLodeinVPN — сборщик и ЧЕСТНЫЙ чекер конфигов.
-​
+
 Этапы:
   1) Скачать источники, убрать дубли                       -> all_configs.txt
   2) BASELINE: проверить, какие конфиги вообще живые
@@ -11,10 +11,10 @@ ZLodeinVPN — сборщик и ЧЕСТНЫЙ чекер конфигов.
      тест-URL (Telegram, Gemini). В итоге остаются только те,
      что тянут ВСЕ URL.
   4) Сложить топ-N + шапку                         -> cleaned_sub.txt
-​
+
 Запуск: python main.py  (требует бинарь xray-knife в PATH или рядом)
 """
-​
+
 import os
 import re
 import sys
@@ -22,7 +22,7 @@ import time
 import shutil
 import subprocess
 import urllib.request
-​
+
 # ----------------------------------------------------------------------------
 # Настройки (можно переопределить через env)
 # ----------------------------------------------------------------------------
@@ -36,17 +36,17 @@ SOURCES = [
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt",
 ]
-​
+
 ALL_FILE    = "all_configs.txt"
 OUTPUT_FILE = "cleaned_sub.txt"
-​
+
 XRAY_KNIFE = os.environ.get("XRAY_KNIFE") or shutil.which("xray-knife") or "./xray-knife"
 THREADS    = os.environ.get("XK_THREADS", "100")
 MAX_OUTPUT = int(os.environ.get("MAX_OUTPUT", "300"))
-​
+
 # Базовый URL "живости" (диагностика). Пусто — пропустить.
 BASELINE_URL = os.environ.get("XK_BASELINE_URL", "https://www.gstatic.com/generate_204").strip()
-​
+
 # Тест-URLы: конфиг должен открыть КАЖДЫЙ. Дефолт: Telegram + Gemini.
 # Важно: берём страницы, которые отдают 200 напрямую (без редиректа).
 TEST_URLS = [
@@ -55,13 +55,13 @@ TEST_URLS = [
         "https://web.telegram.org/k/,https://gemini.google.com/",
     ).split(",") if u.strip()
 ]
-​
+
 URL_FLAG   = os.environ.get("XK_URL_FLAG", "-d")          # флаг тест-URL (исторически -d/--destURL)
 EXTRA_ARGS = os.environ.get("XK_EXTRA_ARGS", "").split()  # любые доп. флаги
-​
+
 PROTO_RE = re.compile(r"(?:vless|vmess|ss|ssr|trojan|tuic|hysteria2?|hy2)://[^\s'\"<>]+")
-​
-​
+
+
 def fetch_sources():
     seen, out = set(), []
     for url in SOURCES:
@@ -83,14 +83,14 @@ def fetch_sources():
         f.write("\n".join(out))
     print(f"[fetch] всего уникальных: {len(out)} -> {ALL_FILE}")
     return len(out)
-​
-​
+
+
 def ensure_xray_knife():
     if not (os.path.exists(XRAY_KNIFE) or shutil.which(XRAY_KNIFE)):
         print(f"[test] !! xray-knife не найден ({XRAY_KNIFE}).")
         sys.exit(2)
-​
-​
+
+
 def collect_configs(path):
     if not os.path.exists(path):
         return []
@@ -101,8 +101,8 @@ def collect_configs(path):
                 if m not in seen:
                     seen.add(m); out.append(m)
     return out
-​
-​
+
+
 def test_pass(input_file, url, out_file):
     if os.path.exists(out_file):
         os.remove(out_file)
@@ -115,8 +115,8 @@ def test_pass(input_file, url, out_file):
     survivors = collect_configs(out_file)
     print(f"        прошли ({url or 'default'}): {len(survivors)}")
     return survivors
-​
-​
+
+
 def run_checks():
     # Диагностика: сколько вообще живых (не режет итог, только показывает)
     if BASELINE_URL:
@@ -131,7 +131,7 @@ def run_checks():
             start_input = start_file
     else:
         start_input = ALL_FILE
-​
+
     # Фильтры по тест-URLам (Telegram, Gemini, ...)
     current_input = start_input
     survivors = collect_configs(start_input) if start_input != ALL_FILE else []
@@ -144,8 +144,8 @@ def run_checks():
             break
         current_input = out_file
     return survivors
-​
-​
+
+
 def write_output(working, total):
     if MAX_OUTPUT > 0:
         working = working[:MAX_OUTPUT]
@@ -160,8 +160,8 @@ def write_output(working, total):
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(header + working) + "\n")
     print(f"[done] записано живых: {len(working)} -> {OUTPUT_FILE}")
-​
-​
+
+
 def main():
     print("=== ZLodeinVPN: сбор + ЧЕСТНАЯ проверка ===")
     total = fetch_sources()
@@ -170,8 +170,7 @@ def main():
     ensure_xray_knife()
     working = run_checks()
     write_output(working, total)
-​
-​
+
+
 if __name__ == "__main__":
     main()
-​
