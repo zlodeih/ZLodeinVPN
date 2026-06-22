@@ -156,7 +156,7 @@ def write_output(working, total):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     checks = " + ".join(TEST_URLS) if TEST_URLS else "default"
     header = [
-        "# profile-title: 🌸ZLodeinVPN_CIDR_AUTOMATED🌸",
+        "# profile-title: 🍩ZLodeinVPN🍩",
         "# profile-update-interval: 1",
         f"# Последнее обновление: {ts} UTC",
         f"# Проверено: {total} | Живых: {len(working)} | Тест: {checks}",
