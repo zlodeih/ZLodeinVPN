@@ -47,7 +47,7 @@ SEEN_FILE    = "seen.json"
 
 XRAY_KNIFE = os.environ.get("XRAY_KNIFE") or shutil.which("xray-knife") or "./xray-knife"
 THREADS    = os.environ.get("XK_THREADS", "100")
-MAX_OUTPUT = int(os.environ.get("MAX_OUTPUT", "0"))   # 0 = без лимита
+MAX_OUTPUT = int(os.environ.get("MAX_OUTPUT", "350"))   # 0 = без лимита
 VPN_NAME   = os.environ.get("XK_VPN_NAME", "ZloyVPN")
 USE_GEOIP  = os.environ.get("XK_GEOIP", "1") != "0"
 NEW_WINDOW = int(os.environ.get("XK_NEW_WINDOW", "3600"))  # сек: «новый» 🆕
@@ -279,7 +279,7 @@ def build_named(configs, cc_by_host, new_set, start=1):
         host = get_host(cfg)
         flag = cc_to_flag(cc_by_host.get(host, "")) or extract_existing_flag(cfg) or "\U0001F3F4"
         tag = "\U0001F195" if cfg in new_set else ""   # 🆕
-        name = f"{tag}{flag}{VPN_NAME} \u2116{i}\u2668"
+        name = f"{flag}{tag}{VPN_NAME} \u2116{i}\U0001F9F6"
         out.append(set_name(cfg, name))
         i += 1
     return out
