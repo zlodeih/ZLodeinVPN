@@ -28,15 +28,15 @@ from urllib.parse import urlsplit, quote, unquote
 # Источники: (url, is_ru)  — is_ru=True → заточено под РФ/белые списки
 # ----------------------------------------------------------------------------
 SOURCES = [
-    "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt",
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt",
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
-    "https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta7.txt",
-    "https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta6.txt",
-    "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt",
-    "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/ru-sni/vless_ru.txt",
-    "https://raw.githubusercontent.com/VOID-Anonymity/V.O.I.D-VPN_Bypass/refs/heads/main/url_work.txt",
+    ("https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt", True),
+    ("https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt", True),
+    ("https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt", True),
+    ("https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt", True),
+    ("https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta7.txt", True),
+    ("https://raw.githubusercontent.com/Maskkost93/kizyak-vpn-4.0/refs/heads/main/kizyakbeta6.txt", True),
+    ("https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt", True),
+    ("https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/ru-sni/vless_ru.txt", True),
+    ("https://raw.githubusercontent.com/VOID-Anonymity/V.O.I.D-VPN_Bypass/refs/heads/main/url_work.txt", True),
 ]
 
 ALL_FILE     = "all_configs.txt"
@@ -85,7 +85,8 @@ def try_base64(text):
 def fetch_sources():
     """Возвращает (configs, ru_set)."""
     seen, out, ru_set = set(), [], set()
-    for url, is_ru in SOURCES:
+    for _entry in SOURCES:
+        url, is_ru = _entry if isinstance(_entry, tuple) else (_entry, False)
         try:
             print(f"[fetch] {url}")
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
