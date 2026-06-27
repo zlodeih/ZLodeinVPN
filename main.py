@@ -271,6 +271,37 @@ def set_name(cfg, name):
     return base + "#" + quote(name, safe="")
 
 
+def get_hostport(cfg):
+    host = get_host(cfg)
+    port = ""
+    if cfg.startswith("vmess://"):
+        b64 = cfg[8:].split("#", 1)[0]
+        b64 += "=" * ((4 - len(b64) % 4) % 4)
+        try:
+            obj = json.loads(base64.b64decode(b64).decode("utf-8", "ignore"))
+            port = str(obj.get("port") or "")
+        except Exception:
+            port = ""
+    else:
+        try:
+            port = str(urlsplit(cfg).port or "")
+        except Exception:
+            port = ""
+    return f"{host}:{port}".lower()
+
+
+def dedup_hostport(configs):
+    """Убирает дубли по host:port (один сервер = одна запись)."""
+    seen, out = set(), []
+    for c in configs:
+        key = get_hostport(c)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
 def build_named(configs, cc_by_host, new_set, start=1):
     """Проставляет имена [🆕]<флаг>ZloyVPN №N♨ (нумерация по порядку = скорость)."""
     out = []
@@ -303,6 +334,30 @@ def write_file(path, lines):
         f.write("\n".join(lines) + "\n")
 
 
+def write_stats(working, ru_working, cc_by_host, total):
+    """Пишет stats.json: счётчики и разбивка по странам для лендинга."""
+    from collections import Counter
+    cnt = Counter()
+    for c in working:
+        cc = cc_by_host.get(get_host(c), "") or "??"
+        cnt[cc] += 1
+    countries = [{"cc": k, "flag": cc_to_flag(k), "n": v} for k, v in cnt.most_common()]
+    stats = {
+        "all": len(working),
+        "ru": len(ru_working),
+        "fast": min(10, len(working)),
+        "checked": total,
+        "countries": countries,
+        "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    try:
+        with open("stats.json", "w", encoding="utf-8") as f:
+            json.dump(stats, f, ensure_ascii=False, indent=2)
+        print(f"[done] stats.json: {len(working)} all / {len(ru_working)} ru / {len(countries)} стран")
+    except Exception as e:
+        print(f"[stats] не сохранён: {e}")
+
+
 def main():
     print("=== ZLodeinVPN: сбор + ЧЕСТНАЯ проверка ===")
     configs, ru_set = fetch_sources()
@@ -312,6 +367,10 @@ def main():
     ensure_xray_knife()
 
     working = run_checks()                 # уже отсортировано по скорости
+    before = len(working)
+    working = dedup_hostport(working)       # один сервер = одна запись
+    if before != len(working):
+        print(f"[dedup] {before} -> {len(working)} (убрано дублей host:port)")
     if MAX_OUTPUT > 0:
         working = working[:MAX_OUTPUT]
 
@@ -343,11 +402,16 @@ def main():
     write_file(OUTPUT_FILE, header(total, len(named_all), checks) + named_all)
     print(f"[done] {OUTPUT_FILE}: {len(named_all)} живых")
 
-    # --- RU-тариф ---
-    ru_working = [c for c in working if c in ru_set]
+    # --- RU-тариф: сначала сервера, физически расположенные в РФ;
+    #     если их мало — берём конфиги из RU-источников (белые списки) ---
+    ru_geo = [c for c in working if cc_by_host.get(get_host(c), "") == "RU"]
+    ru_working = ru_geo if len(ru_geo) >= 3 else [c for c in working if c in ru_set]
     named_ru = build_named(ru_working, cc_by_host, new_set)
     write_file(RU_FILE, header(total, len(named_ru), checks, title_extra="\u00B7RU") + named_ru)
     print(f"[done] {RU_FILE}: {len(named_ru)} живых (под РФ)")
+
+    # --- статистика для сайта (stats.json) ---
+    write_stats(working, ru_working, cc_by_host, total)
 
 
 if __name__ == "__main__":
