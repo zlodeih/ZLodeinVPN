@@ -22,12 +22,15 @@ import socket
 import shutil
 import subprocess
 import urllib.request
-from urllib.parse import urlsplit, quote, unquote
+from urllib.parse import urlsplit, quote, unquote, parse_qs
 
 # ----------------------------------------------------------------------------
 # Источники: (url, is_ru)  — is_ru=True → заточено под РФ/белые списки
 # ----------------------------------------------------------------------------
 SOURCES = [
+    ("https://gitverse.ru/api/repos/bywarm/rser/raw/branch/master/selected.txt", True),
+    ("https://gitverse.ru/api/repos/bywarm/rser/raw/branch/master/wl.txt", True),
+    ("https://github.com/AvenCores/goida-vpn-configs/raw/refs/heads/main/githubmirror/26.txt", True),
     ("https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt", True),
     ("https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt", True),
     ("https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt", True),
@@ -302,7 +305,102 @@ def dedup_hostport(configs):
     return out
 
 
-def build_named(configs, cc_by_host, new_set, start=1):
+# ============================================================================
+# WHITELIST-FRIENDLINESS (эвристика «пробивает белый список»)
+# ============================================================================
+# Домены, обычно доступные на мобильном интернете РФ во время отключений
+# (гос/банки/крупные соцсети/CDN) — их SNI берут для обхода белых списков.
+WHITELIST_SNI = {
+    "gosuslugi.ru", "sberbank.ru", "sber.ru", "mos.ru", "nalog.ru", "nalog.gov.ru",
+    "vk.com", "vk.ru", "vk.company", "userapi.com", "vk-cdn.net", "mail.ru", "ok.ru",
+    "yandex.ru", "ya.ru", "yandex.net", "yastatic.net", "mts.ru", "beeline.ru",
+    "megafon.ru", "tele2.ru", "rt.ru", "gismeteo.ru", "avito.ru", "ozon.ru",
+    "wildberries.ru", "wildberries.com", "rutube.ru", "dzen.ru", "2gis.ru",
+    "cloudflare.com", "www.cloudflare.com", "cloudflare.net", "cloudflare-dns.com",
+    "cloudfront.net", "amazonaws.com", "akamai.net", "akamaized.net", "fastly.net",
+    "gstatic.com", "googleapis.com", "google.com", "www.google.com",
+    "googleusercontent.com", "microsoft.com", "azureedge.net", "windows.net",
+    "apple.com", "icloud.com", "cdn.jsdelivr.net", "jsdelivr.net", "bing.com",
+    "office.com", "whatsapp.net",
+}
+CDN_HOST_HINTS = (
+    "cloudflare", "workers.dev", "pages.dev", "cloudfront", "akamai", "fastly",
+    "gstatic", "googleusercontent", "azureedge", "amazonaws", "jsdelivr",
+)
+
+
+def _domain_hit(value):
+    v = (value or "").lower().strip()
+    if not v:
+        return False
+    for d in WHITELIST_SNI:
+        if v == d or v.endswith("." + d):
+            return True
+    for h in CDN_HOST_HINTS:
+        if h in v:
+            return True
+    return False
+
+
+def config_params(cfg):
+    """security/sni/host-header/port/net из конфига (vless/trojan/ss/vmess)."""
+    p = {"security": "", "sni": "", "hosthdr": "", "port": "", "net": ""}
+    if cfg.startswith("vmess://"):
+        b64 = cfg[8:].split("#", 1)[0]
+        b64 += "=" * ((4 - len(b64) % 4) % 4)
+        try:
+            obj = json.loads(base64.b64decode(b64).decode("utf-8", "ignore"))
+            p["security"] = str(obj.get("tls") or "")
+            p["sni"] = str(obj.get("sni") or obj.get("peer") or "")
+            p["hosthdr"] = str(obj.get("host") or "")
+            p["port"] = str(obj.get("port") or "")
+            p["net"] = str(obj.get("net") or "")
+        except Exception:
+            pass
+        return p
+    try:
+        parts = urlsplit(cfg)
+        p["port"] = str(parts.port or "")
+        qs = parse_qs(parts.query)
+        def _g(*keys):
+            for k in keys:
+                if qs.get(k):
+                    return qs[k][0]
+            return ""
+        p["security"] = _g("security")
+        p["sni"] = _g("sni", "peer", "servername")
+        p["hosthdr"] = _g("host")
+        p["net"] = _g("type", "headerType")
+    except Exception:
+        pass
+    return p
+
+
+def whitelist_score(cfg, is_ru=False):
+    """Эвристический балл «пробивает белый список»: выше = вероятнее."""
+    p = config_params(cfg)
+    score = 0
+    sec = p["security"].lower()
+    if sec == "reality":
+        score += 4
+    elif sec in ("tls", "xtls", "1", "true"):
+        score += 1
+    if _domain_hit(p["sni"]):
+        score += 3
+    if _domain_hit(p["hosthdr"]):
+        score += 3
+    if _domain_hit(get_host(cfg)):
+        score += 2
+    if p["port"] == "443":
+        score += 1
+    if p["net"] in ("ws", "grpc", "httpupgrade", "xhttp"):
+        score += 1
+    if is_ru:
+        score += 2
+    return score
+
+
+def build_named(configs, cc_by_host, new_set, wl_high=None, start=1):
     """Проставляет имена [🆕]<флаг>ZloyVPN №N♨ (нумерация по порядку = скорость)."""
     out = []
     i = start
@@ -310,7 +408,8 @@ def build_named(configs, cc_by_host, new_set, start=1):
         host = get_host(cfg)
         flag = cc_to_flag(cc_by_host.get(host, "")) or extract_existing_flag(cfg) or "\U0001F3F4"
         tag = "\U0001F195" if cfg in new_set else ""   # 🆕
-        name = f"{flag}{tag}{VPN_NAME} \u2116{i}\U0001F9F6"
+        shield = "\U0001F6E1" if (wl_high and cfg in wl_high) else ""  # 🛡 whitelist-friendly
+        name = f"{flag}{tag}{shield}{VPN_NAME} \u2116{i}\U0001F9F6"
         out.append(set_name(cfg, name))
         i += 1
     return out
@@ -334,7 +433,7 @@ def write_file(path, lines):
         f.write("\n".join(lines) + "\n")
 
 
-def write_stats(working, ru_working, cc_by_host, total):
+def write_stats(working, ru_working, cc_by_host, total, wl_high_count=0):
     """Пишет stats.json: счётчики и разбивка по странам для лендинга."""
     from collections import Counter
     cnt = Counter()
@@ -346,6 +445,7 @@ def write_stats(working, ru_working, cc_by_host, total):
         "all": len(working),
         "ru": len(ru_working),
         "fast": min(10, len(working)),
+        "wl_high": wl_high_count,
         "checked": total,
         "countries": countries,
         "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -397,21 +497,28 @@ def main():
 
     checks = " + ".join(TEST_URLS) if (URL_FLAG and TEST_URLS) else "реальная связь (default)"
 
-    # --- основной файл (все живые) ---
-    named_all = build_named(working, cc_by_host, new_set)
+    # --- whitelist-friendliness (эвристика «пробивает белый список») ---
+    wl_scores = {c: whitelist_score(c, c in ru_set) for c in working}
+    WL_HIGH = int(os.environ.get("XK_WL_HIGH", "6"))
+    wl_high = {c for c, s in wl_scores.items() if s >= WL_HIGH}
+    print(f"[wl] пробивных (score>={WL_HIGH}): {len(wl_high)} из {len(working)}")
+
+    # --- основной файл (все живые), 🛡 = whitelist-friendly ---
+    named_all = build_named(working, cc_by_host, new_set, wl_high)
     write_file(OUTPUT_FILE, header(total, len(named_all), checks) + named_all)
     print(f"[done] {OUTPUT_FILE}: {len(named_all)} живых")
 
-    # --- RU-тариф: сначала сервера, физически расположенные в РФ;
-    #     если их мало — берём конфиги из RU-источников (белые списки) ---
+    # --- RU-тариф: сначала сервера, физически в РФ; если мало — из RU-источников.
+    #     Внутри — сортировка по whitelist-баллу (пробивные сверху) ---
     ru_geo = [c for c in working if cc_by_host.get(get_host(c), "") == "RU"]
     ru_working = ru_geo if len(ru_geo) >= 3 else [c for c in working if c in ru_set]
-    named_ru = build_named(ru_working, cc_by_host, new_set)
+    ru_working = sorted(ru_working, key=lambda c: -wl_scores.get(c, 0))
+    named_ru = build_named(ru_working, cc_by_host, new_set, wl_high)
     write_file(RU_FILE, header(total, len(named_ru), checks, title_extra="\u00B7RU") + named_ru)
     print(f"[done] {RU_FILE}: {len(named_ru)} живых (под РФ)")
 
     # --- статистика для сайта (stats.json) ---
-    write_stats(working, ru_working, cc_by_host, total)
+    write_stats(working, ru_working, cc_by_host, total, len(wl_high))
 
 
 if __name__ == "__main__":
