@@ -400,6 +400,29 @@ def whitelist_score(cfg, is_ru=False):
     return score
 
 
+def ru_viable(cfg):
+    """Жёсткий отбор: конфиг с реальным шансом пробить РФ-DPI/белый список.
+
+    Отсекаем незашифрованный трафик и открытые CDN-порты (80/8080/…),
+    их DPI режет влёт. Оставляем Reality/TLS/XTLS (443 в приоритете).
+    Shadowsocks/SSR выкидываем — у них нет TLS-SNI для белого списка.
+    """
+    proto = cfg.split("://", 1)[0].lower()
+    p = config_params(cfg)
+    sec = p["security"].lower()
+    if proto in ("ss", "ssr"):
+        return False
+    if proto in ("trojan", "tuic", "hysteria", "hysteria2", "hy2"):
+        if sec == "none":
+            return False
+    else:
+        if sec not in ("reality", "tls", "xtls", "1", "true"):
+            return False
+    if p["port"] in ("80", "8080", "8880", "2052", "2082", "2086", "2095", "2053"):
+        return False
+    return True
+
+
 def build_named(configs, cc_by_host, new_set, wl_high=None, start=1):
     """Проставляет имена [🆕]<флаг>ZloyVPN №N♨ (нумерация по порядку = скорость)."""
     out = []
@@ -496,6 +519,17 @@ def main():
     cc_by_host = geoip_lookup(hosts)
 
     checks = " + ".join(TEST_URLS) if (URL_FLAG and TEST_URLS) else "реальная связь (default)"
+
+    # --- жёсткий фильтр: только конфиги с реальным шансом пробить РФ ---
+    #     (plaintext и открытые порты 80/8080 DPI режет — толку от них ноль)
+    HARD_FILTER = os.environ.get("XK_HARD_FILTER", "1") == "1"
+    if HARD_FILTER:
+        viable = [c for c in working if ru_viable(c)]
+        if len(viable) >= 5:
+            print(f"[filter] годных: {len(viable)} из {len(working)} (только TLS/Reality, без открытых портов)")
+            working = viable
+        else:
+            print(f"[filter] годных всего {len(viable)} (<5) — оставляю все {len(working)}, чтобы не отдать пустоту")
 
     # --- whitelist-friendliness (эвристика «пробивает белый список») ---
     wl_scores = {c: whitelist_score(c, c in ru_set) for c in working}
